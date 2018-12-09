@@ -22,13 +22,16 @@
  */
 
 #include <stdio.h>  //printf, scanf, sscanf
-#include <stdlib.h> //exit, malloc
+#include <stdlib.h> //exit, malloc, free
 #include <string.h> //strncmp
 #include <ctype.h>  //tolower
-#include <float.h>  //DBL_MAX
 
 #define BUFFER_SIZE 265
 #define FACTOR_SIZE 8
+
+#define MINIMIZE 1
+
+#define EPSILON 0.000000001
 
 struct FACTOR{
     int coefficient;
@@ -43,11 +46,10 @@ static int isMinimization(void);
 static void invertRow(double * const row, const int n);
 static int *findBase(const double ** const table, const int m, const int n);
 static int printVector(const int * const vector, int len);
-static void unitizeBase(double ** const table, const int m, const int n,
-		    const int * const base);
+static void unitizeBase(double ** const table, const int m, const int n, const int * const base);
 static int findEntering(const double * const values, const int * const base, int n, int min);
 static int findLeaving(const double ** const table, int entering, const int m, const int n);
-static void pivotTable(table, m, n, a, b);
+static void pivotTable(const double ** const table, const int m, const int n, const int a, const int b);
 static void unitizeRowByColumn(double * const row, int n, int col);
 static void multiplyRow(double * const row, double coefficient, int len);
 static void addRow(double * const source, double * const subject, int n, double coefficient);
@@ -56,9 +58,13 @@ static void printResult(const double * const objective, const double ** const ta
 static int isOptimal(const double * const x0, int n);
 static void printObjective(const double * const objective, int n);
 static void printValues(const double ** const table, int m, int n);
+static void freeTable(double ** table, int m);
+static void useOnlyNonBaseInObjective(const double ** const table, const int * const base, int m, int n);
+static void simplex(double ** table, const int m, const int n, const int min, const double * objective);
+static int baseSize(const int * const base, const int n);
+void twoPhase(double ** table, const int m, int n, const int extra);
 
-void main(void){
-    int entering, leaving;                          // pivot column and pivot row
+int main(char *argc[], int argv){
     int m, n;                                       // amount of constraints and variables
     int min;                                        // is minimization
 
@@ -67,13 +73,135 @@ void main(void){
 
     int *base;                                      // binary vector indicating whether base[i] is in base or not
 
-    
     /* For the purpose of the simplex table, the objective */
     /* function is expressed in equation form              */
-    invertRow(table[0], n);
+    invertRow(table[0], n); 
     
-    /* If the base is not unit length it must be unitized */
-    unitizeBase(table, m,n, findBase((const double ** const) table, m,n));
+    /* If the base is not unit length it must be unitized  */
+    base = findBase((const double ** const) table, m, n);
+
+    unitizeBase(table, m,n, base);
+    
+    //new table size: m+m-basesize x n
+    printVector(base, n);
+    printf("%d",baseSize(base, n));
+    if(baseSize(base, n) < m){
+	twoPhase(table, m, n, m-baseSize(base, n));
+	for(int j = 0; j < n+1; j++)
+	    table[0][j] = objective[j];
+	useOnlyNonBaseInObjective((const double ** const)new_table, base, m, n+extra);
+    }
+    
+    free(base);
+
+    simplex(table, m, n, min, objective);
+}
+
+void twoPhase(double ** table, const int m, int n, const int extra){
+    printf("\nTWO PHASE: %d %d \n", m, n);
+    double ** new_table = (double **) malloc (sizeof(double *) * (m+1));
+
+    printf("extra: %d\n", extra);
+    //EI LUOTU EKAA VIELÄ OLLENKAAN
+    //luo uus table, nollaa
+    for(int i = 1; i < m+1; i++){
+	printf("%d ", i);
+	new_table[i] = (double *) malloc(sizeof(double) * (n + extra +1));
+	memset(new_table[i], 0, sizeof(double) * (n + extra +1));
+	//kopioi muuttuja
+	for(int j = 0; j < n; j++)
+	    new_table[i][j] = table[i][j];
+	new_table[i][n+extra] = table[i][n];
+    }
+    //luo eka rivi
+    new_table[0] = (double *) malloc(sizeof(double) * (n + extra +1));
+    memset(new_table[0], 0, sizeof(double) * (n + extra +1));
+
+    printTable((const double ** const)new_table, m, n+extra);	
+    
+    // tee kolumnivektori varatuista riveistä
+    //looppaa ykköset
+    int * reserved = (int *) malloc(sizeof(int) * m);
+    memset(reserved, 0, sizeof(int) * m);
+    int *base = findBase(new_table, m, n+extra);
+    
+    for(int j = 0; j < n+extra; j++)
+    	if(base[j])
+    	    for(int i = 1; i < m+1; i++)
+    		if(new_table[i][j])
+    		    reserved[i] = 1;
+    
+    for(int j = n; j < n+extra; j++)
+    	for(int i = 1; i < m+1; i++)
+    	    if(!reserved[i]){
+    		new_table[i][j] = 1;
+    		new_table[0][j] = -1;
+    		reserved[i] = 1;
+    		break;
+    	    }
+    printTable((const double ** const)new_table, m, n+extra);
+    int entering, leaving;                          // pivot column and pivot row
+    /* If the base is not unit length it must be unitized  */
+    base = findBase((const double ** const) new_table, m, n+extra);
+        printVector(base, n+extra);
+    /* For two phase simplex */
+    useOnlyNonBaseInObjective((const double ** const)new_table, base, m, n+extra);
+    free(base);
+    printf("Initial simplex new_table:\n");
+    printTable((const double ** const)new_table, m, n+extra);
+    while(new_table[0][n+extra] > EPSILON){
+    	printf("\n%.50lf\n", new_table[0][n+extra]);
+    	base = findBase((const double ** const)new_table, m, n+extra);
+    	entering = findEntering(new_table[0], base, n+extra, MINIMIZE);
+    	leaving = findLeaving((const double ** const) new_table, findEntering(new_table[0], base, n+extra, MINIMIZE),  m, n+extra);
+    	printf("Pivoting table[%d][%d]:\n\n", entering, leaving);
+
+    	pivotTable((const double ** const)new_table, m, n+extra, entering, leaving);
+
+    	printTable((const double ** const)new_table, m, n+extra);
+    	free(base);
+    }
+    printTable((const double ** const)new_table, m, n+extra);    
+    printf("ennen"); fflush(NULL);
+    //freeTable(new_table, m);
+
+    //kopsataan takasin!
+    for(int i = 1; i < m+1; i++){
+	for(int j = 0; j < n; j++)
+	    table[i][j] = new_table[i][j];
+	table[i][n] = new_table[i][n+extra];
+    }
+    freeTable(new_table, m);
+}
+
+	    
+/*
+ * Returns the amount of ones in the given binary vector.
+ */
+static int baseSize(const int * const base, const int n){
+    int sum = 0;
+
+    for(int j = 0; j < n; j++)
+	if(base[j] == 1)
+	    sum++;
+
+    return sum;
+}
+
+/*
+ * Regular "one phase" simplex.
+ */
+static void simplex(double ** table, const int m, const int n, const int min, const double * objective){
+    int entering, leaving;                          // pivot column and pivot row
+    int *base;                                      // binary vector indicating whether base[i] is in base or not
+    
+    /* If the base is not unit length it must be unitized  */
+    base = findBase((const double ** const) table, m, n);
+    unitizeBase(table, m,n, base);
+
+    /* For two phase simplex */
+    useOnlyNonBaseInObjective((const double ** const)table, base, m, n);
+    free(base);
 
     printf("Initial simplex table:\n");
     printTable((const double ** const)table, m, n);	
@@ -85,19 +213,44 @@ void main(void){
      * neccessary to construct a new base
      */
     while(!isOptimal(table[0], n)){
-	entering = findEntering(table[0], findBase((const double ** const)table, m, n), n, min);
-	leaving = findLeaving((const double ** const) table,
-			      findEntering(table[0], findBase((const double ** const)table, m, n), n, min)
-			      , m, n);
+	base = findBase((const double ** const)table, m, n);
+	entering = findEntering(table[0], base, n, min);
+	leaving = findLeaving((const double ** const) table, findEntering(table[0], base, n, min),  m, n);
 
 	printf("Pivoting table[%d][%d]:\n\n", entering, leaving);
-	pivotTable(table, m, n, entering, leaving);
-	printTable((const double ** const)table, m, n);	
-
+	pivotTable((const double ** const)table, m, n, entering, leaving);
+	printTable((const double ** const)table, m, n);
+	free(base);
     }
 
-    printf("Done!\n\n");
-    printResult(objective, table, m, n, min);
+    printResult(objective, (const double ** const)table, m, n, min);
+
+    freeTable(table, m);
+    free(objective);    
+}
+
+/*
+ * This function is for two phase simplex. It guarantees that there is no 
+ * base variables in the objective function.
+ */
+static void useOnlyNonBaseInObjective(const double ** const table, const int * const base, int m, int n){
+    for(int j = 0; j < n; j++)
+	if(base[j])
+	    if(table[0][j])
+		for(int i = 1; i < m+1; i++)
+		    if(table[i][j])
+			addRow((double * const)table[i], (double * const)table[0], n, -table[0][j]);
+}
+
+/*
+ * Frees the memory allocated to the simplex table
+ */
+static void freeTable(double ** table, int m){
+    printf("%d ", m);
+    for(int i = 0; i < m+1; i++){
+	printf("%d ", i); fflush(NULL);
+	free(table[i]);
+    }
 }
 
 /*
@@ -123,12 +276,16 @@ static void printObjective(const double * const objective, int n){
  * Prints the final results of the algoritm including
  * optimized result, and values of every variable
  */
-static void printResult(const double * const objective, const double ** const table, int m, int n, int min){
+static void printResult(const double * const objective, const double ** const table,
+			const int m, const int n, const int min){
+    
     int * base = findBase(table, m, n);
 
     printObjective(objective, n);
     printf("= %.2lf, when\n\n", table[0][n]);
     printValues(table, m, n);
+
+    free(base);
 }
 
 /* 
@@ -150,6 +307,8 @@ static void printValues(const double ** const table, int m, int n){
     for(int j = 0; j < n; j++)
 	if(base[j] == 0)
 	    printf("x%d = 0\n", j+1);
+
+    free(base);
 }
 
 /*
@@ -202,16 +361,15 @@ static void unitizeRowByColumn(double * const row, int n, int col){
 /*
  * Pivots the table by element table[a][b].
  */
-static void pivotTable(const double ** const table, const int m, const int n,
-		       const int a, const int b){
-    
-    unitizeRowByColumn(table[b], n, a);
-    
+static void pivotTable(const double ** const table, const int m, const int n, const int a, const int b){
+
+    unitizeRowByColumn((double * const)table[b], n, a);
+
     for(int i = 0; i < m+1; i++){
     	if(i == b)
 	    continue;
-	
-	addRow(table[b], table[i], n, -table[i][a]);
+
+	addRow((double * const)table[b], (double * const)table[i], n, -table[i][a]);
     }
 }
 
@@ -285,7 +443,7 @@ static int printVector(const int * const vector, int len){
 /*
  * Returns binary vector indicating variables in base.
  * Presumes there is a valid base and m linearly independent colums.
- * If those conditions does not apply null pointer is returned instead.
+ * Base size should be checked after a call to findBase!
  */
 static int *findBase(const double ** const table, const int m, const int n){
     int *base = (int *) malloc(sizeof(int) * n);
@@ -305,7 +463,12 @@ static int *findBase(const double ** const table, const int m, const int n){
 	
 	/* Set the column corresponding to a variable to zero  */
 	/* or one depending whether the base condition is met. */
-	if(nonzero <= 1) base[j] = 1;
+	if(nonzero <= 1){
+	    /* Find the element and ensure it is positive */
+	    for(int i = 1; i < m+1; i++)
+		if(table[i][j] > 0)
+		    base[j] = 1;
+	}
 	else             base[j] = 0;
     }
 
@@ -314,8 +477,7 @@ static int *findBase(const double ** const table, const int m, const int n){
 	if(base[i] == 1)
 	    basic++;
 
-    if(basic == m) return base;
-    else           return NULL;
+    return base;
 }
 
 /*
@@ -323,7 +485,8 @@ static int *findBase(const double ** const table, const int m, const int n){
  */
 static void multiplyRow(double * const row, double coefficient, int len){
 
-    for(int i = 0; i < len+1; i++)
+    printf("n: %d\n", len); fflush(NULL);
+    for(int i = 0; i < len; i++)
 	row[i] *= coefficient;
 }
 
