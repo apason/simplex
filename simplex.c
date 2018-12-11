@@ -1,3 +1,7 @@
+/* simplex.c - implements the simplex algorithm */
+
+/* Author: Arttu Kilpinen                       */
+
 /* input is of form
  *
  * m n
@@ -38,160 +42,145 @@ struct FACTOR{
     int variable;
 };
 
-static double **readTable(int * const min, int * const m1, int * const n1);
+/* Input functions */
+static double * const * const readTable (int * const min, int * const m1, int * const n1);
+static void readLine(double * const * const table, const int line);
 static struct FACTOR readFactor(const char * const factor);
-static void printTable(const double ** const t, const int n, const int m);
-static void readLine(double ** const table, const int line);
 static int isMinimization(void);
-static void invertRow(double * const row, const int n);
-static int *findBase(const double ** const table, const int m, const int n);
-static int printVector(const int * const vector, int len);
-static void unitizeBase(double ** const table, const int m, const int n, const int * const base);
-static int findEntering(const double * const values, const int * const base, int n, int min);
-static int findLeaving(const double ** const table, int entering, const int m, const int n);
-static void pivotTable(const double ** const table, const int m, const int n, const int a, const int b);
-static void unitizeRowByColumn(double * const row, int n, int col);
-static void multiplyRow(double * const row, double coefficient, int len);
-static void addRow(double * const source, double * const subject, int n, double coefficient);
-static double *getObjective(const double * const objective, int n);
-static void printResult(const double * const objective, const double ** const table, int m, int n, int min);
-static int isOptimal(const double * const x0, int n);
-static void printObjective(const double * const objective, int n);
-static void printValues(const double ** const table, int m, int n);
-static void freeTable(double ** table, int m);
-static void useOnlyNonBaseInObjective(const double ** const table, const int * const base, int m, int n);
-static void simplex(double ** table, const int m, const int n, const int min, const double * objective);
+
+/* Output functions */
+static void printTable(const double * const * const t, const int n, const int m);
+static void printValues(const double * const * const table, const int m, const int n);
+static void printObjective(const double * const objective, const int n);
+static int printVector(const int * const vector, const int len);
+static void printResult(const double * const objective, const double * const * const table,
+			const int m, const int n, const int min);
+
+/* Main simplex functions */
+static void pivotTable(const double * const * const table, const int m, const int n, const int a, const int b);
+static void addArtificialVariables(double * const * const table, const int m, const int n, const int extra);
+static double * const * firstPhase(double * const * const table, const int m, const int n, const int extra);
+static int findEntering(const double * const values, const int * const base, const int n, const int min);
+static int findLeaving(const double * const * const table, const int entering, const int m, const int n);
+static int lex(const double * const x1, const double * const x2, const int n, const int entering);
+static int simplex(double * const * table, const int m, const int n, const int min);
+static int * findBase(const double * const * const table, const int m, const int n);
+static int isOptimal(const double * const x0, const int n, const int min);
+static void useOnlyNonBaseInObjective(const double * const * const table, const int * const base,
+				      const int m, const int n);
+
+/* Helper functions */
+static void addRow(const double * const source, double * const subject, const int n, const double coefficient);
+static void unitizeBase(double * const * const table, const int m, const int n, const int * const base);
+static void multiplyRow(double * const row, const double coefficient, const int len);
+static void unitizeRowByColumn(double * const row, const int n, const int col);
+static double * getCopyOfRow(const double * const objective, const int n);
 static int baseSize(const int * const base, const int n);
-void twoPhase(double ** table, const int m, int n, const int extra);
+static void invertRow(double * const row, const int n);
+static void freeTable(double ** table, const int m);
+static void copyToOriginal(double * const * const table, const double * const * const new_table,
+			   const int m, const int n, const int extra);
+
 
 int main(char *argc[], int argv){
-    int m, n;                                       // amount of constraints and variables
-    int min;                                        // is minimization
+    int m, n;                                                     // amount of constraints and variables
+    int min;                                                      // is minimization
 
-    double  **table    = readTable(&min, &m, &n);   // simplex table 
-    double  *objective = getObjective(table[0], n); // original objective function
+    double * const * table     = readTable(&min, &m, &n);         // simplex table 
+    double * const   objective = getCopyOfRow(table[0], n);       // original objective function
 
-    int *base;                                      // binary vector indicating whether base[i] is in base or not
+    const int *base;                                              // binary vector indicating base variables
 
     /* For the purpose of the simplex table, the objective */
-    /* function is expressed in equation form              */
+    /* function is expressed in equation form.             */
     invertRow(table[0], n); 
     
-    /* If the base is not unit length it must be unitized  */
-    base = findBase((const double ** const) table, m, n);
-
+    /* If the base is not unit length it must be unitized. */
+    base = findBase((const double * const * const)table, m, n);
     unitizeBase(table, m,n, base);
     
-    //new table size: m+m-basesize x n
-    printVector(base, n);
-    printf("%d",baseSize(base, n));
+    /* If there is no suitable base in original simplex    */
+    /* table, two phase method is used.                    */
     if(baseSize(base, n) < m){
-	twoPhase(table, m, n, m-baseSize(base, n));
+	table = firstPhase(table, m, n, m-baseSize(base, n));
+
+	/* If first phase does not find a valib base the   */
+	/* original instance is infeasible.                */
+	if(table == NULL){
+	    free((void *)base);
+	    free(objective);    
+	    return 1;
+	}
+
+	/* Copy original objective function back to table. */
 	for(int j = 0; j < n+1; j++)
 	    table[0][j] = objective[j];
-	useOnlyNonBaseInObjective((const double ** const)new_table, base, m, n+extra);
+	
+	invertRow(table[0], n);
     }
-    
-    free(base);
 
-    simplex(table, m, n, min, objective);
+    if(simplex(table, m, n, min))
+	printResult(objective, (const double * const * const)table, m, n, min);
+
+    free((void *)base);
+    freeTable((double **)table, m);
+    free(objective);    
 }
 
-void twoPhase(double ** table, const int m, int n, const int extra){
-    printf("\nTWO PHASE: %d %d \n", m, n);
-    double ** new_table = (double **) malloc (sizeof(double *) * (m+1));
+/* *********************************************** */
+/* *******    Main simplex functions    ********** */
+/* *********************************************** */
 
-    printf("extra: %d\n", extra);
-    //EI LUOTU EKAA VIELÄ OLLENKAAN
-    //luo uus table, nollaa
+
+/*
+ * Handles the initialization of the first phase of two phase simplex:
+ * Creates new (bigger) simplex table and copies the old information 
+ * into it. Modifies new colums and objective so it can be solved with
+ * "normal" simplex algorithm.
+ */
+static double * const * firstPhase(double * const * const table, const int m, const int n, const int extra){
+    double ** const new_table = (double ** const) malloc (sizeof(double *) * (m+1));
+
+    /* Create the first row and allocate it to zero. Row length is original + extra     */
+    new_table[0] = (double *) malloc(sizeof(double) * (n + extra +1));
+    memset(new_table[0], 0, sizeof(double) * (n + extra +1));
+
+    /* Create other rows corresponding to base variables. Copy old data to a new table. */
     for(int i = 1; i < m+1; i++){
-	printf("%d ", i);
 	new_table[i] = (double *) malloc(sizeof(double) * (n + extra +1));
 	memset(new_table[i], 0, sizeof(double) * (n + extra +1));
-	//kopioi muuttuja
+
+	/* Copy variables and solution column. The space for extra is filled later.     */
 	for(int j = 0; j < n; j++)
 	    new_table[i][j] = table[i][j];
 	new_table[i][n+extra] = table[i][n];
     }
-    //luo eka rivi
-    new_table[0] = (double *) malloc(sizeof(double) * (n + extra +1));
-    memset(new_table[0], 0, sizeof(double) * (n + extra +1));
 
-    printTable((const double ** const)new_table, m, n+extra);	
-    
-    // tee kolumnivektori varatuista riveistä
-    //looppaa ykköset
-    int * reserved = (int *) malloc(sizeof(int) * m);
-    memset(reserved, 0, sizeof(int) * m);
-    int *base = findBase(new_table, m, n+extra);
-    
-    for(int j = 0; j < n+extra; j++)
-    	if(base[j])
-    	    for(int i = 1; i < m+1; i++)
-    		if(new_table[i][j])
-    		    reserved[i] = 1;
-    
-    for(int j = n; j < n+extra; j++)
-    	for(int i = 1; i < m+1; i++)
-    	    if(!reserved[i]){
-    		new_table[i][j] = 1;
-    		new_table[0][j] = -1;
-    		reserved[i] = 1;
-    		break;
-    	    }
-    printTable((const double ** const)new_table, m, n+extra);
-    int entering, leaving;                          // pivot column and pivot row
-    /* If the base is not unit length it must be unitized  */
-    base = findBase((const double ** const) new_table, m, n+extra);
-        printVector(base, n+extra);
-    /* For two phase simplex */
-    useOnlyNonBaseInObjective((const double ** const)new_table, base, m, n+extra);
-    free(base);
-    printf("Initial simplex new_table:\n");
-    printTable((const double ** const)new_table, m, n+extra);
-    while(new_table[0][n+extra] > EPSILON){
-    	printf("\n%.50lf\n", new_table[0][n+extra]);
-    	base = findBase((const double ** const)new_table, m, n+extra);
-    	entering = findEntering(new_table[0], base, n+extra, MINIMIZE);
-    	leaving = findLeaving((const double ** const) new_table, findEntering(new_table[0], base, n+extra, MINIMIZE),  m, n+extra);
-    	printf("Pivoting table[%d][%d]:\n\n", entering, leaving);
+    /* Prepare simplex table and use regular one phase simplex to find starting bfs.    */
+    addArtificialVariables(new_table, m, n, n+extra);
+    simplex(new_table, m, n+extra, MINIMIZE);
 
-    	pivotTable((const double ** const)new_table, m, n+extra, entering, leaving);
-
-    	printTable((const double ** const)new_table, m, n+extra);
-    	free(base);
+    /* Check if original table has a feasible solution.                                 */
+    if(new_table[0][n+extra] >  EPSILON ||              
+       new_table[0][n+extra] < -EPSILON  ){
+	
+	freeTable((double **)new_table, m);
+	freeTable((double **)    table, m);
+	printf("Infeasible!\n");
+	return NULL;
     }
-    printTable((const double ** const)new_table, m, n+extra);    
-    printf("ennen"); fflush(NULL);
-    //freeTable(new_table, m);
 
-    //kopsataan takasin!
-    for(int i = 1; i < m+1; i++){
-	for(int j = 0; j < n; j++)
-	    table[i][j] = new_table[i][j];
-	table[i][n] = new_table[i][n+extra];
-    }
+    /* Copy data back to original table and free the new one with artificial variables. */
+    copyToOriginal(table, (const double * const * const)new_table, m, n, extra);
     freeTable(new_table, m);
-}
 
-	    
-/*
- * Returns the amount of ones in the given binary vector.
- */
-static int baseSize(const int * const base, const int n){
-    int sum = 0;
-
-    for(int j = 0; j < n; j++)
-	if(base[j] == 1)
-	    sum++;
-
-    return sum;
+    return table;
 }
 
 /*
  * Regular "one phase" simplex.
  */
-static void simplex(double ** table, const int m, const int n, const int min, const double * objective){
+static int simplex(double * const * table, const int m, const int n, const int min){    
     int entering, leaving;                          // pivot column and pivot row
     int *base;                                      // binary vector indicating whether base[i] is in base or not
     
@@ -212,232 +201,24 @@ static void simplex(double ** table, const int m, const int n, const int min, co
      * Finds pivoting element, unitizes it and handles all row operations
      * neccessary to construct a new base
      */
-    while(!isOptimal(table[0], n)){
+    while(!isOptimal(table[0], n, min)){
 	base = findBase((const double ** const)table, m, n);
 	entering = findEntering(table[0], base, n, min);
 	leaving = findLeaving((const double ** const) table, findEntering(table[0], base, n, min),  m, n);
+
+	if(leaving == 0){
+	    free(base);
+	    printf("Unbounded!\n");
+	    return 0;
+	}
 
 	printf("Pivoting table[%d][%d]:\n\n", entering, leaving);
 	pivotTable((const double ** const)table, m, n, entering, leaving);
 	printTable((const double ** const)table, m, n);
 	free(base);
     }
-
-    printResult(objective, (const double ** const)table, m, n, min);
-
-    freeTable(table, m);
-    free(objective);    
-}
-
-/*
- * This function is for two phase simplex. It guarantees that there is no 
- * base variables in the objective function.
- */
-static void useOnlyNonBaseInObjective(const double ** const table, const int * const base, int m, int n){
-    for(int j = 0; j < n; j++)
-	if(base[j])
-	    if(table[0][j])
-		for(int i = 1; i < m+1; i++)
-		    if(table[i][j])
-			addRow((double * const)table[i], (double * const)table[0], n, -table[0][j]);
-}
-
-/*
- * Frees the memory allocated to the simplex table
- */
-static void freeTable(double ** table, int m){
-    printf("%d ", m);
-    for(int i = 0; i < m+1; i++){
-	printf("%d ", i); fflush(NULL);
-	free(table[i]);
-    }
-}
-
-/*
- * Prints left side expression of given equation (row).
- * Ignores coefficients of zero
- *
- * Precision of double may need adjustment
- */
-static void printObjective(const double * const objective, int n){
-    int first = 1;
-    
-    for(int j = 0; j < n; j++)
-	if(objective[j] != 0)
-	    if(first){
-		printf("%.0lfx%i ",  objective[j], j+1);
-		first = 0;
-	    }
-	    else
-		printf("%+.0lfx%i ", objective[j], j+1);
-}
-
-/*
- * Prints the final results of the algoritm including
- * optimized result, and values of every variable
- */
-static void printResult(const double * const objective, const double ** const table,
-			const int m, const int n, const int min){
-    
-    int * base = findBase(table, m, n);
-
-    printObjective(objective, n);
-    printf("= %.2lf, when\n\n", table[0][n]);
-    printValues(table, m, n);
-
-    free(base);
-}
-
-/* 
- * Prints value of every variable in format:
- * x1 = <value>
- */
-static void printValues(const double ** const table, int m, int n){
-    int *base = findBase((const double ** const)table, m, n);
-
-    /* First print variables in the base */
-    for(int j = 0; j < n; j++){
-	if (base[j] == 1)
-	    for(int i = 1; i < m+1; i++)
-		if(table[i][j] == 1)
-		    printf("x%d = %.2lf\n", j+1, table[i][n]);
-    }
-    
-    /* Zero valued variables */
-    for(int j = 0; j < n; j++)
-	if(base[j] == 0)
-	    printf("x%d = 0\n", j+1);
-
-    free(base);
-}
-
-/*
- * Checks if the optimal value is reached
- */
-static int isOptimal(const double * const x0, int n){
-    
-    for(int j = 0; j < n; j++)
-	if(x0[j] < 0)
-	    return 0;
     
     return 1;
-}
-
-/*
- * Copies given row of the table to a different memory region.
- * 
- * New memory region is returned.
- */
-static double *getObjective(const double * const objective, int n){
-    double * original = (double *)  malloc(sizeof(double) * n);
-
-    for(int j = 0; j < n; j++)
-	original[j] = objective[j];
-
-    return original;
-}
-
-
-/*
- * Multiplies source row by coefficient and adds the result to subject.
- *
- * Row operation.
- */
-static void addRow(double * const source, double * const subject, int n, double coefficient){
-  
-    for(int j = 0; j < n+1; j++)
-	subject[j] += coefficient * source[j];
-}
-
-/*
- * Unitizes the (base) column of given row
- */
-static void unitizeRowByColumn(double * const row, int n, int col){
-    double coefficient = row[col];
-    
-    multiplyRow(row, 1/coefficient, n+1);
-}
-
-/*
- * Pivots the table by element table[a][b].
- */
-static void pivotTable(const double ** const table, const int m, const int n, const int a, const int b){
-
-    unitizeRowByColumn((double * const)table[b], n, a);
-
-    for(int i = 0; i < m+1; i++){
-    	if(i == b)
-	    continue;
-
-	addRow((double * const)table[b], (double * const)table[i], n, -table[i][a]);
-    }
-}
-
-/*
- * Finds the leaving variable by taking minimum ratio of table[imin][n]/table[imin][entering].
- *
- * Returns ROW index of the leaving variable. (NOT the normal variable (name) index)
- */
-static int findLeaving(const double ** const table, int entering, const int m, const int n){
-    int imin;
-    
-    /* Initialize to first candidate */
-    for(int i = 1; i < m; i++)
-	if(table[i][entering] > 0)
-	   imin = i;
-
-    /* Find smallest ratio */
-    for(int i = 1; i < m+1; i++){
-	if(table[i][entering] <= 0)
-	    continue;
-	if(table[i][n]/table[i][entering] < table[imin][n]/table[imin][entering])
-	    imin = i;
-    }
-
-    /* imin now corresponds to imin:th nonzero variable in base and imin:th row in simplex table */
-    /* Return value is relative to the simplex row (and not the variable column)                 */
-    return imin;
-}
-
-/*
- * Finds the entering variable by taking most negative/positive (in maximization/minimization)
- * variable which is not in the base. If there is no feasible leaving variable this method
- * may not work.
- *
- * Returns column index of the leaving variable
- */
-static int findEntering(const double * const values, const int * const base, int n, int min){
-    int index;
-
-    /* Initialize to first nonbasic variable */
-    for(int i = 0; i < n; i++)
-	if(!base[i])
-	    index = i;
-
-    /* Find minumum/maximum */
-    for(int i = 0; i < n; i++){
-	if(base[i]) continue;
-	if(!min){
-	    /* Maximization */
-	    if(values[i] < values[index])
-		index = i;
-	}
-	else
-	    /* Minimization */
-	    if(values[i] > values[index])
-		index = i;
-    }
-	
-    return index;
-}
-
-/*
- * Prints the given (row) vector of the simplex table
- */
-static int printVector(const int * const vector, int len){
-    for(int i = 0; i < len; i++)
-	printf("%i\t", vector[i]);
-    printf("\n");
 }
 
 /*
@@ -445,9 +226,8 @@ static int printVector(const int * const vector, int len){
  * Presumes there is a valid base and m linearly independent colums.
  * Base size should be checked after a call to findBase!
  */
-static int *findBase(const double ** const table, const int m, const int n){
+static int *findBase(const double * const * const table, const int m, const int n){
     int *base = (int *) malloc(sizeof(int) * n);
-    int basic = 0;
     int nonzero;
 
     /* Scan every (column) vector corresponding to a variable. */
@@ -464,45 +244,181 @@ static int *findBase(const double ** const table, const int m, const int n){
 	/* Set the column corresponding to a variable to zero  */
 	/* or one depending whether the base condition is met. */
 	if(nonzero <= 1){
-	    /* Find the element and ensure it is positive */
+	    /* Find the element and ensure it is positive      */
 	    for(int i = 1; i < m+1; i++)
 		if(table[i][j] > 0)
 		    base[j] = 1;
 	}
-	else             base[j] = 0;
+	else        base[j] = 0;
     }
-
-    /* Count the base to ensure the base is large enough.      */
-    for(int i = 0; i < n; i++)
-	if(base[i] == 1)
-	    basic++;
 
     return base;
 }
 
 /*
- * Multiplies row by coefficient.
+ * Finds the leaving variable by taking minimum ratio of table[imin][n]/table[imin][entering].
+ * If there is two equal minimum ratios, lexicographic method is used.
+ *
+ * Returns ROW index of the leaving variable. (NOT the normal variable (name) index)
+ * If the instance is unbounded, imin is set to zero.
  */
-static void multiplyRow(double * const row, double coefficient, int len){
+static int findLeaving(const double * const * const table, const  int entering, const int m, const int n){
+    int imin = 0;  //initialize to invalid value
+    
+    /* Initialize to first candidate */
+    for(int i = 1; i < m; i++)
+	if(table[i][entering] > 0)
+	   imin = i;
 
-    printf("n: %d\n", len); fflush(NULL);
-    for(int i = 0; i < len; i++)
-	row[i] *= coefficient;
+    /* Find smallest ratio */
+    if(imin > 0)
+	for(int i = 1; i < m+1; i++){
+	    if(table[i][entering] <= 0)
+		continue;
+	    if(table[i][n]/table[i][entering] < table[imin][n]/table[imin][entering] - EPSILON)      // smaller
+		imin = i;
+	    else if(table[i][n]/table[i][entering] < table[imin][n]/table[imin][entering] + EPSILON) // equal
+		imin = lex(table[i], table[imin], n, entering) == 0 ? i : imin;
+	}
+
+    /* imin now corresponds to imin:th nonzero variable in base and imin:th row in simplex table */
+    /* Return value is relative to the simplex row (and not the variable column)                 */
+    return imin;
 }
 
 /*
- * if there is a base column with value other than one, corresponding 
- * row is unitized
+ * Finds the entering variable by taking most negative/positive (in maximization/minimization)
+ * variable which is not in the base.
+ *
+ * Returns column index of the leaving variable
  */
-static void unitizeBase(double ** const table, const int m, const int n, const int * const base){
+static int findEntering(const double * const values, const int * const base, const int n, const int min){
+    int index;
 
-    for(int j =  0; j < n; j++){
-	if(!base[j]) continue;
-	for(int i = 1; i < m+1; i++)
-	    if(table[i][j] != 0 && table[i][j] != 1)
-		multiplyRow(table[i], 1/table[i][j], n);
+    /* Initialize to first nonbasic variable */
+    for(int i = 0; i < n; i++)
+	if(!base[i])
+	    index = i;
+
+    /* Find minumum/maximum */
+    for(int i = 0; i < n; i++){
+	if(base[i]) continue;
+	if(!min){	    
+	    /* Maximization */
+	    if(values[i] < values[index])
+		index = i;
+	}
+	else
+	    /* Minimization */
+	    if(values[i] > values[index])
+		index = i;
+    }
+	
+    return index;
+}
+
+/*
+ * Artificial variables comes to base. This function calculates the unit (column) vectors
+ * for those variables. (the place where to put one in that column)
+ * Reserved vector describes rows where new base units can be put to.
+ */
+static void addArtificialVariables(double * const * const table, const int m, const int n, const int extra){
+    int * base            = findBase((const double ** const)table, m, n+extra);
+    int * const reserved  = (int * const) malloc(sizeof(int) * m);          
+
+    memset(reserved, 0, sizeof(int) * m);    
+
+    /* Find rows with unit element corresponding to a base variabel         */
+    for(int j = 0; j < n+extra; j++)
+    	if(base[j])
+    	    for(int i = 1; i < m+1; i++)
+    		if(table[i][j])
+    		    reserved[i] = 1;
+
+    /* Distribute units corresponding to a artificial elements to free fows */
+    for(int j = n; j < n+extra; j++)
+    	for(int i = 1; i < m+1; i++)
+    	    if(!reserved[i]){
+    		table[i][j] = 1;
+    		table[0][j] = -1;
+    		reserved[i] = 1;
+    		break;
+    	    }
+
+    free(base);
+    free(reserved);
+}
+
+/*
+ * Divides rows with entering column and calculates lexicographical ordering for resultung rows.
+ * If the first row is lexicographically smaller then 0 is returned, 1 otherwise.
+ */
+int lex(const double * const x1, const double * const x2, const int n, const int entering){
+    /* Copy rows from the original simplex table.        */
+    double * const xa = getCopyOfRow(x1, n);
+    double * const xb = getCopyOfRow(x2, n);
+
+    /* "Pivot" rows                                      */
+    unitizeRowByColumn(xa, n, entering);
+    unitizeRowByColumn(xb, n, entering);
+
+    /* Find lexicographical orde and return if possible. */
+    for(int j = 0; j < n; j++)
+	if(xa[j] < xb[j] - EPSILON)                      // truly smaller
+	    return 0;
+	else if (xa[j] > xb[j] + EPSILON)                // truly greater
+	    return 1;
+
+    free(xa);
+    free(xb);
+    
+    return 1;                                            // return value here does not matter
+}
+
+/*
+ * Pivots the table by element table[a][b].
+ */
+static void pivotTable(const double * const * const table, const int m, const int n, const int a, const int b){
+
+    unitizeRowByColumn((double * const)table[b], n, a);
+
+    for(int i = 0; i < m+1; i++){
+    	if(i == b)
+	    continue;
+
+	addRow((double * const)table[b], (double * const)table[i], n, -table[i][a]);
     }
 }
+
+/*
+ * This function  guarantees that there is no 
+ * base variables in the objective function.
+ */
+static void useOnlyNonBaseInObjective(const double * const * const table, const int * const base, const int m,
+				      const int n){
+    for(int j = 0; j < n; j++)
+	if(base[j])
+	    if(table[0][j])
+		for(int i = 1; i < m+1; i++)
+		    if(table[i][j])
+			addRow((double * const)table[i], (double * const)table[0], n, -table[0][j]);
+}
+
+/*
+ * Checks if the optimal value is reached.
+ */
+static int isOptimal(const double * const x0, const int n, const int min){
+
+    for(int j = 0; j < n; j++)
+	if(min ? x0[j] > EPSILON : x0[j] < -EPSILON)
+	    return 0;
+    
+    return 1;
+}
+
+/* *********************************************** */
+/* ***********     Input functions     *********** */
+/* *********************************************** */
 
 /*
  * Reads the input and constructs a simplex table.
@@ -510,7 +426,7 @@ static void unitizeBase(double ** const table, const int m, const int n, const i
  *
  * Returns the generated simplex table.
  */
-static double **readTable(int * const min, int * const m, int * const n){
+static double * const * const readTable(int * const min, int * const m, int * const n){
     double **table;
     int l;
  
@@ -539,15 +455,6 @@ static double **readTable(int * const min, int * const m, int * const n){
 }
 
 /*
- * Multiplies row by -1.
- */
-static void invertRow(double * const row, const int n){
-
-    for(int i = 0; i < n+1; i++)
-	row[i] = -row[i];
-}
-
-/*
  * Parses stdio for the type of the objective function. (min or max)
  *
  * Returns 1 for minimization, 0 for maximization and -1 otherwise.
@@ -572,7 +479,7 @@ static int isMinimization(void){
  * Reads one expression from the input. This can be either the
  * objective function or left side of the constraint equation.
  */
-static void readLine(double ** const table, const int line){
+static void readLine(double * const * const table, const int line){
     char factor[FACTOR_SIZE];
     struct FACTOR f;
     
@@ -596,11 +503,78 @@ static struct FACTOR readFactor(const char * const factor){
     return f;
 }
 
+/* *********************************************** */
+/* ***********    Output functions     *********** */
+/* *********************************************** */
+
+
+/* 
+ * Prints value of every variable in format:
+ * x1 = <value>
+ *
+ * Precision of double may need adjustment.
+ */
+static void printValues(const double * const * const table, const int m, const int n){
+    int *base = findBase((const double ** const)table, m, n);
+
+    /* First print variables in the base */
+    for(int j = 0; j < n; j++){
+	if (base[j] == 1)
+	    for(int i = 1; i < m+1; i++)
+		if(table[i][j] == 1)
+		    printf("x%d = %.2lf\n", j+1, table[i][n]);
+    }
+    
+    /* Zero valued variables */
+    for(int j = 0; j < n; j++)
+	if(base[j] == 0)
+	    printf("x%d = 0\n", j+1);
+
+    free(base);
+}
+
+/*
+ * Prints left side expression of given equation (row).
+ * Ignores coefficients of zero
+ *
+ * Precision of double may need adjustment
+ */
+static void printObjective(const double * const objective, const int n){
+    int first = 1;
+    
+    for(int j = 0; j < n; j++)
+	if(objective[j] != 0)
+	    if(first){
+		printf("%.0lfx%i ",  objective[j], j+1);
+		first = 0;
+	    }
+	    else
+		printf("%+.0lfx%i ", objective[j], j+1);
+}
+
+/*
+ * Prints the final results of the algoritm including
+ * optimized result and values of every variable.
+ *
+ * Precision of double may need adjustment.
+ */
+static void printResult(const double * const objective, const double * const * const table,
+			const int m, const int n, const int min){
+    
+    int * base = findBase(table, m, n);
+
+    printObjective(objective, n);
+    printf("= %.2lf, when\n\n", table[0][n]);
+    printValues(table, m, n);
+
+    free(base);
+}
+
 /* 
  * Prints the simplex table.
  * Precision of the output may need adjustment
  */
-static void printTable(const double ** const t, const int m, const int n){
+static void printTable(const double * const * const t, const int m, const int n){
 
     for(int i = 0; i < m+1; i++){
 	for(int j = 0; j < n+1; j++)
@@ -610,3 +584,126 @@ static void printTable(const double ** const t, const int m, const int n){
     }
     printf("\n");
 }
+
+/*
+ * Prints the given (row) vector of the simplex table
+ */
+static int printVector(const int * const vector, const int len){
+    for(int i = 0; i < len; i++)
+	printf("%i\t", vector[i]);
+    printf("\n");
+}
+
+
+
+/* *********************************************** */
+/* ***********    Helper functions     *********** */
+/* *********************************************** */
+
+
+/*
+ * Copies phase1 simplex table (larger) to original (smaller) simplex table.
+ * Copying ignores columns for artificial variables. The first row is 
+ * copied back in the main function.
+ */
+void copyToOriginal(double * const * const table, const double * const * const new_table,
+		    const int m, const int n, const int extra){
+
+    for(int i = 1; i < m+1; i++){
+	for(int j = 0; j < n; j++)
+	    table[i][j] = new_table[i][j];
+	table[i][n] = new_table[i][n+extra];
+    }
+}
+	    
+/*
+ * Returns the amount of ones in the given binary vector.
+ */
+static int baseSize(const int * const base, const int n){
+    int sum = 0;
+
+    for(int j = 0; j < n; j++)
+	if(base[j] == 1)
+	    sum++;
+
+    return sum;
+}
+
+/*
+ * Frees the memory allocated to the simplex table
+ */
+static void freeTable(double ** table, const int m){
+
+    for(int i = 0; i < m+1; i++)
+	free(table[i]);
+
+    free(table);
+}
+
+/*
+ * Copies given row of the table to a different memory region.
+ * 
+ * New memory region is returned.
+ */
+static double * getCopyOfRow(const double * const objective, const int n){
+    double * original = (double *)  malloc(sizeof(double) * n);
+
+    for(int j = 0; j < n; j++)
+	original[j] = objective[j];
+
+    return original;
+}
+
+/*
+ * Multiplies source row by coefficient and adds the result to subject.
+ *
+ * Row operation.
+ */
+static void addRow(const double * const source, double * const subject, const int n, const double coefficient){
+  
+    for(int j = 0; j < n+1; j++)
+	subject[j] += coefficient * source[j];
+}
+
+/*
+ * Unitizes the (base) column of given row.
+ * Make sure that row[col] is nonzero!
+ */
+static void unitizeRowByColumn(double * const row, const int n, const int col){
+    double coefficient = row[col];
+    
+    multiplyRow(row, 1/coefficient, n+1);
+}
+
+/*
+ * Multiplies row by coefficient.
+ */
+static void multiplyRow(double * const row, const double coefficient, const int len){
+
+    for(int i = 0; i < len; i++)
+	row[i] *= coefficient;
+}
+
+/*
+ * if there is a base column with value other than one, corresponding 
+ * row is unitized
+ */
+static void unitizeBase(double * const * const table, const int m, const int n, const int * const base){
+
+    for(int j =  0; j < n; j++){
+	if(!base[j]) continue;
+	for(int i = 1; i < m+1; i++)
+	    if(table[i][j] != 0 && table[i][j] != 1)
+		multiplyRow(table[i], 1/table[i][j], n);
+    }
+}
+
+/*
+ * Multiplies row by -1.
+ */
+static void invertRow(double * const row, const int n){
+
+    for(int i = 0; i < n+1; i++)
+	row[i] = -row[i];
+}
+
