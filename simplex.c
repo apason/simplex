@@ -223,7 +223,7 @@ static int simplex(double * const * table, const int m, const int n, const int m
 
 	printf("\n\nPivoting table[%d][%d]:\n\n", entering, leaving);
 	pivotTable((const double ** const)table, m, n, entering, leaving);
-	if(oo) addRow(table[0], oo, n, -oo[entering]);
+	if(oo) addRow(table[leaving], oo, n, -oo[entering]);
 
 	printTable((const double ** const)table, m, n, oo);
 	free(base);
@@ -277,7 +277,7 @@ static int findLeaving(const double * const * const table, const  int entering, 
     int imin = 0;  //initialize to invalid value
     
     /* Initialize to first candidate */
-    for(int i = 1; i < m; i++)
+    for(int i = 1; i < m+1; i++)
 	if(table[i][entering] > 0)
 	   imin = i;
 
