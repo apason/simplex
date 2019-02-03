@@ -97,7 +97,7 @@ int main(char *argc[], int argv){
     
     /* If the base is not unit length it must be unitized. */
     base = findBase((const double * const * const)table, m, n);
-    unitizeBase(table, m,n, base);
+    unitizeBase(table, m, n, base);
     
     /* If there is no suitable base in original simplex    */
     /* table, two phase method is used.                    */
@@ -194,7 +194,7 @@ static int simplex(double * const * table, const int m, const int n, const int m
     
     /* If the base is not unit length it must be unitized  */
     base = findBase((const double ** const) table, m, n);
-    unitizeBase(table, m,n, base);
+    unitizeBase(table, m, n, base);
 
     /* For two phase simplex */
     useOnlyNonBaseInObjective((const double ** const)table, base, m, n);
@@ -361,10 +361,10 @@ static void addArtificialVariables(double * const * const table, const int m, co
 }
 
 /*
- * Divides rows with entering column and calculates lexicographical ordering for resultung rows.
+ * Divides rows with entering column and calculates lexicographical ordering for resulting rows.
  * If the first row is lexicographically smaller then 0 is returned, 1 otherwise.
  */
-int lex(const double * const x1, const double * const x2, const int n, const int entering){
+static int lex(const double * const x1, const double * const x2, const int n, const int entering){
     /* Copy rows from the original simplex table.        */
     double * const xa = getCopyOfRow(x1, n);
     double * const xb = getCopyOfRow(x2, n);
@@ -373,7 +373,7 @@ int lex(const double * const x1, const double * const x2, const int n, const int
     unitizeRowByColumn(xa, n, entering);
     unitizeRowByColumn(xb, n, entering);
 
-    /* Find lexicographical orde and return if possible. */
+    /* Find lexicographical order and return if possible. */
     for(int j = 0; j < n; j++)
 	if(xa[j] < xb[j] - EPSILON)                      // truly smaller
 	    return 0;
@@ -382,7 +382,6 @@ int lex(const double * const x1, const double * const x2, const int n, const int
 
     free(xa);
     free(xb);
-    
     return 1;                                            // return value here does not matter
 }
 
@@ -693,9 +692,9 @@ static void freeTable(double ** table, const int m){
  * New memory region is returned.
  */
 static double * getCopyOfRow(const double * const objective, const int n){
-    double * original = (double *)  malloc(sizeof(double) * n);
+    double * original = (double *)  malloc(sizeof(double) * (n+1));
 
-    for(int j = 0; j < n; j++)
+    for(int j = 0; j < n+1; j++)
 	original[j] = objective[j];
 
     return original;
@@ -719,7 +718,7 @@ static void addRow(const double * const source, double * const subject, const in
 static void unitizeRowByColumn(double * const row, const int n, const int col){
     double coefficient = row[col];
     
-    multiplyRow(row, 1/coefficient, n+1);
+    multiplyRow(row, 1/coefficient, n);
 }
 
 /*
@@ -727,7 +726,7 @@ static void unitizeRowByColumn(double * const row, const int n, const int col){
  */
 static void multiplyRow(double * const row, const double coefficient, const int len){
 
-    for(int i = 0; i < len; i++)
+    for(int i = 0; i < len+1; i++)
 	row[i] *= coefficient;
 }
 
